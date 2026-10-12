@@ -1,5 +1,6 @@
 package dev.piko.desktop
 
+import dev.piko.data.auth.ClipFeedFilterDefaults
 import dev.piko.data.auth.PikoUserPreferences
 import dev.piko.data.auth.PlayerGestureDefaults
 import dev.piko.data.auth.SidePanelPrefs
@@ -64,6 +65,12 @@ class DesktopPikoPreferences(
             widthDp = settings.get(KEY_CLIP_PANEL_WIDTH).toFloatOrNull(),
         ),
     )
+    private val clipMinDurationSeconds = MutableStateFlow(
+        ClipFeedFilterDefaults.normalize(
+            settings.get(KEY_CLIP_MIN_DURATION_SECONDS).toIntOrNull() ?: ClipFeedFilterDefaults.MIN_DURATION_SECONDS,
+        ),
+    )
+    private val clipIncludeUntimed = MutableStateFlow(settings.get(KEY_CLIP_INCLUDE_UNTIMED) == "true")
     private val pikpakDomain = MutableStateFlow(settings.get(KEY_PIKPAK_DOMAIN))
     private val snailMode = MutableStateFlow(
         SnailMode(
@@ -258,6 +265,19 @@ class DesktopPikoPreferences(
         clipPanel.value = clipPanel.value.copy(widthDp = widthDp)
     }
 
+    override val clipMinDurationSecondsFlow: Flow<Int> = clipMinDurationSeconds.asStateFlow()
+    override suspend fun setClipMinDurationSeconds(seconds: Int) {
+        if (seconds !in ClipFeedFilterDefaults.MinDurationChoices) return
+        settings.set(KEY_CLIP_MIN_DURATION_SECONDS, seconds.toString())
+        clipMinDurationSeconds.value = seconds
+    }
+
+    override val clipIncludeUntimedFlow: Flow<Boolean> = clipIncludeUntimed.asStateFlow()
+    override suspend fun setClipIncludeUntimed(enabled: Boolean) {
+        settings.set(KEY_CLIP_INCLUDE_UNTIMED, enabled.toString())
+        clipIncludeUntimed.value = enabled
+    }
+
 
     override val pikpakDomainFlow: Flow<String> = pikpakDomain.asStateFlow()
     override suspend fun setPikpakDomain(root: String) {
@@ -434,6 +454,8 @@ class DesktopPikoPreferences(
         fun tileSizeKey(view: String) = "ui.drive.tileSize.$view"
         const val KEY_CLIP_PANEL_OPEN = "ui.clipPanel.open"
         const val KEY_CLIP_PANEL_WIDTH = "ui.clipPanel.width"
+        const val KEY_CLIP_MIN_DURATION_SECONDS = "clips.minDurationSeconds"
+        const val KEY_CLIP_INCLUDE_UNTIMED = "clips.includeUntimed"
         const val KEY_SIDEBAR_COLLAPSED = "ui.sidebar.collapsed"
         const val KEY_SHOW_EXTENSIONS = "ui.drive.showExtensions"
         const val KEY_PIKPAK_DOMAIN = "network.pikpakDomain"

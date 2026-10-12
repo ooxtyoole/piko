@@ -48,7 +48,9 @@ import androidx.compose.material.icons.outlined.Speed
 import androidx.compose.material.icons.outlined.Subtitles
 import androidx.compose.material.icons.outlined.SwapVerticalCircle
 import androidx.compose.material.icons.outlined.Sync
+import androidx.compose.material.icons.outlined.HourglassEmpty
 import androidx.compose.material.icons.outlined.TextFields
+import androidx.compose.material.icons.outlined.Timer
 import androidx.compose.material.icons.outlined.TravelExplore
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.VisibilityOff
@@ -92,6 +94,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.piko.data.auth.ClipFeedFilterDefaults
 import dev.piko.data.auth.SnailMode
 import dev.piko.shared.net.ProxySetting
 import dev.piko.shared.sync.PikoSettingsSync
@@ -166,6 +169,11 @@ fun SettingsScreen(
     var showArchivePasswords by remember { mutableStateOf(false) }
     var showPlaybackQuality by remember { mutableStateOf(false) }
     val playbackMaxHeight by sessionManager.playbackMaxHeightFlow.collectAsStateWithLifecycle(initialValue = 0)
+    var showClipMinDuration by remember { mutableStateOf(false) }
+    val clipMinDurationSeconds by sessionManager.clipMinDurationSecondsFlow.collectAsStateWithLifecycle(
+        initialValue = ClipFeedFilterDefaults.MIN_DURATION_SECONDS,
+    )
+    val clipIncludeUntimed by sessionManager.clipIncludeUntimedFlow.collectAsStateWithLifecycle(initialValue = false)
     var showDownloadQuality by remember { mutableStateOf(false) }
     val downloadMaxHeight by sessionManager.downloadMaxHeightFlow.collectAsStateWithLifecycle(initialValue = null)
 
@@ -376,6 +384,25 @@ fun SettingsScreen(
                                 onCheckedChange = { scope.launch { sessionManager.setHardwareDecoding(it) } },
                             )
                         }
+                        SettingsGroup("信息流") {
+                            SettingsNavigationRow(
+                                icon = Icons.Outlined.Timer,
+                                title = "最短时长",
+                                supporting = clipMinDurationSummary(clipMinDurationSeconds),
+                                onClick = { showClipMinDuration = true },
+                                trailingIcon = null,
+                            )
+                            // 不限时长时没写时长的已经会收进来，这行不起作用，收起
+                            DependentRow(visible = clipMinDurationSeconds > 0) {
+                                SettingsSwitchRow(
+                                    icon = Icons.Outlined.HourglassEmpty,
+                                    title = "没有时长也列入",
+                                    supporting = "目录里没写时长的先列入，查到详情后再按最短时长筛选",
+                                    checked = clipIncludeUntimed,
+                                    onCheckedChange = { scope.launch { sessionManager.setClipIncludeUntimed(it) } },
+                                )
+                            }
+                        }
                     }
 
                     // 存进网盘时的处理：链接由谁打开、带不带字幕、存成什么名字。原来分在「网盘」与「下载」两处，
@@ -579,6 +606,14 @@ fun SettingsScreen(
                 scope.launch { sessionManager.setSnailMode(mode) }
             },
             onDismiss = { showSnailDialog = false },
+        )
+    }
+
+    if (showClipMinDuration) {
+        ClipMinDurationDialog(
+            seconds = clipMinDurationSeconds,
+            onSelect = { seconds -> scope.launch { sessionManager.setClipMinDurationSeconds(seconds) } },
+            onDismiss = { showClipMinDuration = false },
         )
     }
 

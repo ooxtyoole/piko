@@ -5,12 +5,13 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import dev.piko.data.auth.ClipFeedFilterDefaults
+import dev.piko.data.auth.PikoUserPreferences
 import dev.piko.data.repository.isPlayableVideo
 import dev.piko.shared.data.PikoCacheStore
 import dev.piko.shared.data.PikoClientProvider
 import dev.piko.shared.data.PikoDriveRepository
 import dev.piko.shared.data.PikoFileSortOrder
-import dev.piko.shared.data.isVaulted
 import dev.piko.shared.data.PikoPathBreadcrumb
 import dev.piko.shared.log.PikoLog
 import dev.piko.shared.log.logFailure
@@ -26,6 +27,10 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
@@ -62,6 +67,8 @@ const val CLIP_LENGTH_MS = 30_000L
  *
  * 候选边遍历边加：服务端按类型过滤只在全盘（parent_id=*）时有用，按文件夹圈定范围就只能逐层列目录。
  * 每个目录用网盘页同一套启发式折叠挑掉样片、广告、预告，找到头几个就能开播，不等遍历完。
+ * 时长另有两道筛选，在设置里改：短于最短时长的不收（默认一分钟）；目录里没写时长的默认跳过，
+ * 打开「没有时长也列入」后先收，查详情时用各档画面上的时长再筛一遍。
  * 下一层的目录顺序打乱，免得先把第一个子目录挖到底，前面几十段全出自同一个合集。
  * 挑段的先后见 [selectFeedCandidates]：连着的几段尽量出自不同的文件夹、不同的作品。
  */
@@ -71,6 +78,7 @@ class ClipFeedSession(
     private val media: PikoMediaRepository,
     private val cacheStore: PikoCacheStore?,
     private val scope: CoroutineScope,
+    private val preferences: PikoUserPreferences? = null,
 ) {
     var root by mutableStateOf<PikoPathBreadcrumb?>(null)
         private set
@@ -191,10 +199,40 @@ class ClipFeedSession(
     // 查过没有转码的，值是查的时刻，过了 [REJECT_TTL_MS] 重查：转码可能是后来有人播过才生成的。
     // 它们照样能放，只是起播要读原画，排在有转码的之后，见 [ranked]
     private val untranscoded = HashMap<String, Long>()
+
+    // 查过详情、比当前最短时长还短的。不写进 [rejected]：那份要留三天，改了设置也出不来。
+    // 最短时长或「没有时长也列入」一变就清空，下一圈再量。
+    private val belowMin = HashSet<String>()
+
+    // 这一轮遍历里因为时长没进候选池的视频。筛选放宽时从这里补进池子，不必等下次打开重走目录。
+    private val heldBack = LinkedHashMap<String, FileStat>()
     private var collectJob: Job? = null
     private var fillJob: Job? = null
     private var saveJob: Job? = null
     private val json = Json { ignoreUnknownKeys = true }
+
+    init {
+        val prefs = preferences
+        if (prefs != null) scope.launch {
+            combine(
+                prefs.clipMinDurationSecondsFlow,
+                prefs.clipIncludeUntimedFlow,
+            ) { seconds, untimed -> ClipFeedFilterDefaults.normalize(seconds) to untimed }
+                .distinctUntilChanged()
+                .drop(1)
+                .collect { (seconds, untimed) ->
+                    val minDurationMs = seconds * 1000L
+                    val ready = heldBack.values.filter { it.meetsClipDuration(minDurationMs, untimed) }
+                    ready.forEach { file ->
+                        heldBack.remove(file.id)
+                        listedFiles[file.id] = file
+                        addToPool(file)
+                    }
+                    belowMin.clear()
+                    if (root != null) fillAhead()
+                }
+        }
+    }
 
     /**
      * 刷 [folder]。正是眼前这一个时原样继续；换了文件夹就读那个文件夹存下的。
@@ -224,6 +262,8 @@ class ClipFeedSession(
         rejected.clear()
         verified.clear()
         untranscoded.clear()
+        belowMin.clear()
+        heldBack.clear()
         listedFiles.clear()
         account = owner
         root = folder
@@ -371,7 +411,13 @@ class ClipFeedSession(
                         block.fileIds.forEach { workOf[it] = work }
                     }
                     val folded = structure?.foldedIds.orEmpty()
-                    val candidates = files.filter { it.id !in folded && it.isClipCandidate() }
+                    val filter = clipFilter()
+                    val candidates = ArrayList<FileStat>()
+                    for (file in files) {
+                        if (file.id in folded || !file.isPlayableVideo() || file.isUploading) continue
+                        if (file.meetsClipDuration(filter.minDurationMs, filter.includeUntimed)) candidates += file
+                        else heldBack[file.id] = file
+                    }
                     candidates.forEach { listedFiles[it.id] = it }
                     candidates.forEach(::addToPool)
                     fillAhead()
@@ -412,7 +458,7 @@ class ClipFeedSession(
                     fun candidateOf(clip: Clip) = byId[clip.fileId]?.let(::feedCandidate)
                         ?: FeedCandidate(clip.fileId, clip.parentId, "id:${clip.fileId}", "id:${clip.fileId}", clip.parentId == root?.id)
                     val picks = selectFeedCandidates(
-                        pool = pool.filter { it.id !in rejected }.map(::feedCandidate),
+                        pool = pool.filter { it.id !in rejected && it.id !in belowMin }.map(::feedCandidate),
                         queued = (clips.drop(furthestIndex + 1) + upcoming).map(::candidateOf),
                         // 只看得到最近这些：避开最近放过的至多 50 段，文件夹与作品的热度看得更短
                         watched = clips.take(furthestIndex + 1).takeLast(50).map(::candidateOf),
@@ -435,10 +481,13 @@ class ClipFeedSession(
                     val probed = coroutineScope {
                         batch.map { file -> async { file.id to transcodeOf(file) } }.awaitAll()
                     }
-                    // 查过之后池里的那份才带着时长；量出来太短的（多是样片、花絮）从此不挑
+                    // 查过之后池里的那份才带着时长。比最短时长还短的这一次会话不再挑，不写进拒绝名单：
+                    // 那份要留三天，改了设置也出不来。设置一变就清空 [belowMin]，下一圈再量。
+                    // 最短时长在查完之后再读：查询途中改了设置，按改完的筛。
+                    val minDurationMs = clipFilter().minDurationMs
                     val (checked, tooShort) = probed.mapNotNull { (id, transcode) -> pooled(id)?.let { it to transcode } }
-                        .partition { (file, _) -> file.durationMs() >= MIN_DURATION_MS }
-                    tooShort.forEach { (file, _) -> rejected[file.id] = Clock.System.now().toEpochMilliseconds() }
+                        .partition { (file, _) -> file.durationMs() >= minDurationMs }
+                    tooShort.forEach { (file, _) -> belowMin += file.id }
                     PikoLog.d(TAG, "查转码 ${batch.size} 个，有 ${checked.count { it.second == Transcode.Yes }} 个：${checkStarted.elapsedNow().inWholeMilliseconds} ms")
                     val now = Clock.System.now().toEpochMilliseconds()
                     checked.forEach { (file, transcode) ->
@@ -634,14 +683,16 @@ class ClipFeedSession(
         const val MIN_DURATION_MS = 60_000L
     }
 
-    /**
-     * 能挑出片段的视频。没有时长的跳过：随机起点要按时长算，先打开再量又要多等一次连接；
-     * 服务端抽过元数据的视频列目录时就带着时长，没有的多半也放不了。
-     * 归档条目例外：它们存自磁力解析，本来就没有时长，挑中后查转码时从借出的详情里量，见 [transcodeOf]。
-     */
-    private fun FileStat.isClipCandidate(): Boolean =
-        isPlayableVideo() && !isUploading && (isVaulted || durationMs() >= MIN_DURATION_MS)
+    /** 眼前的筛选。没接偏好时用默认：短于一分钟的不收，目录里没写时长的跳过。 */
+    private suspend fun clipFilter(): ClipFeedFilter {
+        val prefs = preferences ?: return ClipFeedFilter(MIN_DURATION_MS, includeUntimed = false)
+        return ClipFeedFilter(
+            minDurationMs = ClipFeedFilterDefaults.normalize(prefs.clipMinDurationSecondsFlow.first()) * 1000L,
+            includeUntimed = prefs.clipIncludeUntimedFlow.first(),
+        )
+    }
 
-    private fun FileStat.durationMs(): Long =
-        ((params["duration"]?.toDoubleOrNull() ?: 0.0) * 1000).toLong()
+    private data class ClipFeedFilter(val minDurationMs: Long, val includeUntimed: Boolean)
+
+    private fun FileStat.durationMs(): Long = paramsDurationMs()
 }

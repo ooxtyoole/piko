@@ -113,6 +113,8 @@ class SessionManager(private val context: Context) : PikoUserPreferences {
         fun driveTileSize(view: String) = stringPreferencesKey("drive_tile_size_$view")
         val CLIP_PANEL_OPEN = booleanPreferencesKey("clip_panel_open")
         val CLIP_PANEL_WIDTH = floatPreferencesKey("clip_panel_width")
+        val CLIP_MIN_DURATION_SECONDS = intPreferencesKey("clip_min_duration_seconds")
+        val CLIP_INCLUDE_UNTIMED = booleanPreferencesKey("clip_include_untimed")
         val SIDEBAR_COLLAPSED = booleanPreferencesKey("sidebar_collapsed")
         val SHOW_EXTENSIONS = booleanPreferencesKey("show_extensions")
         val PIKPAK_DOMAIN = stringPreferencesKey("pikpak_domain")
@@ -383,6 +385,25 @@ class SessionManager(private val context: Context) : PikoUserPreferences {
     override suspend fun setClipPanelWidth(widthDp: Float) {
         context.dataStore.edit { preferences ->
             preferences[PreferencesKeys.CLIP_PANEL_WIDTH] = widthDp
+        }
+    }
+
+    override val clipMinDurationSecondsFlow: Flow<Int> = preference {
+        ClipFeedFilterDefaults.normalize(it[PreferencesKeys.CLIP_MIN_DURATION_SECONDS] ?: ClipFeedFilterDefaults.MIN_DURATION_SECONDS)
+    }
+
+    override suspend fun setClipMinDurationSeconds(seconds: Int) {
+        if (seconds !in ClipFeedFilterDefaults.MinDurationChoices) return
+        context.dataStore.edit { preferences ->
+            preferences[PreferencesKeys.CLIP_MIN_DURATION_SECONDS] = seconds
+        }
+    }
+
+    override val clipIncludeUntimedFlow: Flow<Boolean> = preference { it[PreferencesKeys.CLIP_INCLUDE_UNTIMED] ?: false }
+
+    override suspend fun setClipIncludeUntimed(enabled: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[PreferencesKeys.CLIP_INCLUDE_UNTIMED] = enabled
         }
     }
 

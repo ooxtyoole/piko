@@ -1,5 +1,6 @@
 package dev.piko.shared.smoke
 
+import dev.piko.data.auth.ClipFeedFilterDefaults
 import dev.piko.data.auth.PikoUserPreferences
 import dev.piko.data.auth.SidePanelPrefs
 import dev.piko.data.auth.SnailMode
@@ -77,6 +78,10 @@ class MemoryPreferences : PikoUserPreferences {
     override val clipPanelFlow: Flow<SidePanelPrefs> = MutableStateFlow(SidePanelPrefs(open = false, widthDp = null))
     override suspend fun setClipPanelOpen(open: Boolean) = Unit
     override suspend fun setClipPanelWidth(widthDp: Float) = Unit
+    override val clipMinDurationSecondsFlow: Flow<Int> = MutableStateFlow(ClipFeedFilterDefaults.MIN_DURATION_SECONDS)
+    override suspend fun setClipMinDurationSeconds(seconds: Int) = Unit
+    override val clipIncludeUntimedFlow: Flow<Boolean> = MutableStateFlow(false)
+    override suspend fun setClipIncludeUntimed(enabled: Boolean) = Unit
     override val pikpakDomainFlow: Flow<String> = MutableStateFlow("")
     override suspend fun setPikpakDomain(root: String) = Unit
     override val snailModeFlow: Flow<SnailMode> = MutableStateFlow(SnailMode())

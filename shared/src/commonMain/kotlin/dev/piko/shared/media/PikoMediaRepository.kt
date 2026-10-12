@@ -337,7 +337,7 @@ class PikoMediaRepository(
                 }
                 ClipProbe(
                     hasTranscode = detail.medias.any { !it.isOrigin && it.mediaName == CLIP_RESOLUTION && it.url != null },
-                    durationMs = detail.params["duration"]?.toDoubleOrNull()?.let { (it * 1000).toLong() },
+                    durationMs = durationMsOf(detail).takeIf { it > 0 },
                 )
             }.onFailure { PikoLog.d(TAG, "信息流查详情失败，按无转码处理：${logFile(fileId, "")}，${it::class.simpleName}：${it.message}") }
                 .getOrDefault(ClipProbe(hasTranscode = false, durationMs = null))
@@ -775,8 +775,12 @@ class PikoMediaRepository(
     private suspend fun streamSizeOf(client: PikPakClient, detail: FileDetail, mediaId: String): Long =
         client.fileHandle(detail, mediaId = mediaId, onRangeAttempt = ::logRangeAttempt).use { it.streamSize() }
 
-    private fun durationMsOf(detail: FileDetail): Long =
-        detail.params["duration"]?.toDoubleOrNull()?.let { (it * 1000).toLong() } ?: 0L
+    private fun durationMsOf(detail: FileDetail): Long {
+        detail.params["duration"]?.toDoubleOrNull()?.let { return (it * 1000).toLong() }
+        // 分享转存的文件 params 里常常没有时长，时长在各档画面上
+        val seconds = detail.medias.firstNotNullOfOrNull { it.video?.duration?.takeIf { duration -> duration > 0 } } ?: return 0L
+        return seconds * 1000L
+    }
 
     /**
      * 建 handle 与字节来源。handle 的内容哈希、文件对象与第一条直链都取自 [detail]，第一次读不必再查。

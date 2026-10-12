@@ -24,6 +24,17 @@ data class SnailMode(
     }
 }
 
+/**
+ * 信息流筛选的默认值与可选档位。存储两端与设置页共用这一份。
+ * [MIN_DURATION_SECONDS] 为 0 表示不限时长。不在 [MinDurationChoices] 里的值按默认 1 分钟。
+ */
+object ClipFeedFilterDefaults {
+    const val MIN_DURATION_SECONDS = 60
+    val MinDurationChoices = listOf(0, 30, 60, 180, 300)
+
+    fun normalize(seconds: Int): Int = seconds.takeIf { it in MinDurationChoices } ?: MIN_DURATION_SECONDS
+}
+
 /** 播放器进退步长与长按倍速的默认值与可选档位。存储两端与播放设置面板共用这一份。 */
 object PlayerGestureDefaults {
     const val SEEK_STEP_SECONDS = 10
@@ -112,6 +123,21 @@ interface PikoUserPreferences {
     val clipPanelFlow: Flow<SidePanelPrefs>
     suspend fun setClipPanelOpen(open: Boolean)
     suspend fun setClipPanelWidth(widthDp: Float)
+
+    /**
+     * 信息流最短时长，秒，见 [ClipFeedFilterDefaults]。默认 60。0 是不限制。
+     * 跟着设置同步：换一台设备也按同样的标准刷。
+     */
+    val clipMinDurationSecondsFlow: Flow<Int>
+    suspend fun setClipMinDurationSeconds(seconds: Int)
+
+    /**
+     * 目录列表没写时长的视频也先放进信息流，查到详情后再按最短时长筛。默认关。
+     * 分享转存的文件时长常常只在各档画面上，不在列表的 params 里。跟着设置同步，理由同 [clipMinDurationSecondsFlow]。
+     * 最短时长为 0 时这一项不起作用：不限时长就已经把没写时长的收进来了。
+     */
+    val clipIncludeUntimedFlow: Flow<Boolean>
+    suspend fun setClipIncludeUntimed(enabled: Boolean)
 
     /** PikPak API 用哪个根域名（如 mypikpak.net），空串是自动测速挑选，见 PikPakDomainSelector。每台设备各自的网络，不同步。 */
     val pikpakDomainFlow: Flow<String>

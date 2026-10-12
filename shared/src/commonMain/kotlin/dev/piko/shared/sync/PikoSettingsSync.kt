@@ -72,6 +72,13 @@ val SyncedSettings: List<SyncedSetting> = listOf(
         { prefs -> prefs.playerBoostSpeedFlow.map(Float::toString) },
         { prefs, value -> value.toFloatOrNull()?.let { prefs.setPlayerBoostSpeed(it) } },
     ),
+    // 信息流按什么时长收视频，换一台设备也一样
+    SyncedSetting(
+        "clipMinDurationSeconds",
+        { prefs -> prefs.clipMinDurationSecondsFlow.map(Int::toString) },
+        { prefs, value -> value.toIntOrNull()?.let { prefs.setClipMinDurationSeconds(it) } },
+    ),
+    bool("clipIncludeUntimed", { it.clipIncludeUntimedFlow }) { setClipIncludeUntimed(it) },
 )
 
 /**

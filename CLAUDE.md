@@ -253,6 +253,9 @@ jvmTest（`PIKPAK_PROBE=1`，凭据在它的 `.env`），总量不超过 100 GB�
   多数分卷当场回 `INVALID_FILE_FORMAT`；zip span 的最后一卷能列出目录，解压任务却以 `E_INVALID_FORMAT` 失败。
 - **文件名上限按 UTF-8 算，1024 字节**（2026-09-29 实测，文件与文件夹相同）：ASCII 1024 个、汉字 341 个、
   补充平面字符 256 个，再多一个字符回 `file_name_too_long`（error_code=3，HTTP 400）。批量重命名据此当场标出。
+- **分享转存的文件，列目录的 `params` 可以没有时长**（2026-10-13 实测）：详情的 `medias[].video` 已有 duration、宽高与编码，
+  `params` 仍只有分享字段（`platform`、`url`、`original_file_id`），没有 `duration` 与 `width`。信息流默认只看
+  `params.duration`，这类视频整段跳过；设置里打开「没有时长也列入」后查详情，用画面上的时长再按最短时长筛。
 - **文件的 `params` 客户端写不进**（2026-10-08 实测，SDK 的 `SourceParamsProbeTest`）：秒传建文件时请求体带 `params` 被静默丢弃；
   事后 `PATCH /drive/v1/files/{id}` 只要 `params` 非空一律 400 `invalid_argument`（`url`、自定义键、原样回传都一样），`{}` 回
   `file_nothing_updated`。`params.url`（来源）只有离线下载与分享转存由服务端填；秒传的来源只能 Piko 自己记（见「归档」一节的来源账本）。

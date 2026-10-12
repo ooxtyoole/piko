@@ -1,10 +1,27 @@
 package dev.piko.shared.state
 
+import dev.piko.shared.data.isVaulted
 import io.github.nihildigit.pikpak.FileStat
 import kotlin.random.Random
 
 internal fun FileStat.clipContentKey(): String =
     if (hash.isNotBlank()) "hash:${hash.lowercase()}:$size" else "id:$id"
+
+/** 列表 params 里的时长，毫秒。没写或写了但不是数，都是 0。 */
+internal fun FileStat.paramsDurationMs(): Long =
+    ((params["duration"]?.toDoubleOrNull() ?: 0.0) * 1000).toLong()
+
+/**
+ * 按时长收不收这个视频。归档条目列表里本来就没有时长，先收，查详情再量。
+ * 写了时长的按 [minDurationMs] 筛。没写的默认跳过；[includeUntimed] 时先收，查详情后用画面上的时长再筛。
+ * [minDurationMs] 为 0 时不限，没写时长的也收。
+ */
+internal fun FileStat.meetsClipDuration(minDurationMs: Long, includeUntimed: Boolean): Boolean {
+    if (isVaulted) return true
+    val durationMs = paramsDurationMs()
+    if (durationMs <= 0L) return includeUntimed || minDurationMs <= 0L
+    return durationMs >= minDurationMs
+}
 
 /**
  * 挑段时一个视频的归属：所在文件夹、作品（文件名解析出的同一部）与内容（gcid，同一内容的几份副本算一个）。
