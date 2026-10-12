@@ -43,7 +43,9 @@ Windows job 应显式配置 contents: read、actions: read。所有签名前置 
 
 首次沿用 release.yml 的 workflow_dispatch 演练机制，使用 test-signing，只保留 workflow
 产物，不创建 Release。tag 发布应使用 release-signing；正式证书未就绪时应失败，不能自动
-退回测试签名或无签名发布。
+退回测试签名或无签名发布。仓库没有 `SIGNPATH_API_TOKEN` 时（尚未接入 SignPath 的 fork）
+跳过两阶段签名，仍用未签名的应用目录打 MSI、便携包和更新清单。有密钥而签名失败时仍然失败，
+不退回未签名。
 
 验证范围包括：
 

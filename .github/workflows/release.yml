@@ -20,6 +20,7 @@ name: Release
 # 不做证明。发版流程本身改过之后先演练一遍，确认能走通再推 tag。
 # 需要仓库 Secret：ANDROID_KEYSTORE_BASE64、ANDROID_KEYSTORE_PASSWORD、ANDROID_KEY_ALIAS、ANDROID_KEY_PASSWORD
 # Windows 签名：SIGNPATH_API_TOKEN；手动演练用 test-signing，tag 发布用 release-signing。
+# 仓库没有这份密钥时不签名，仍打出 MSI 与便携包。有密钥而签名失败时不退回未签名。
 
 on:
   push:
@@ -220,8 +221,23 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
+      # 只判断密钥在不在，不把值写进日志。没有密钥就打未签名的包；有密钥则签名失败仍然失败。
+      - name: Detect SignPath token
+        id: signing
+        shell: bash
+        env:
+          SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+        run: |
+          if [ -z "$SIGNPATH_API_TOKEN" ]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "仓库没有 SIGNPATH_API_TOKEN，继续打未签名的安装包。" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Sign launcher
         id: sign-launcher
+        if: steps.signing.outputs.enabled == 'true'
         uses: signpath/github-action-submit-signing-request@v3
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
@@ -234,6 +250,7 @@ jobs:
           output-artifact-directory: ${{ runner.temp }}/signed-launcher
 
       - name: Stage signed application image
+        if: steps.signing.outputs.enabled == 'true'
         timeout-minutes: 5
         shell: pwsh
         run: |
@@ -246,7 +263,19 @@ jobs:
           Copy-Item "$env:RUNNER_TEMP/signed-launcher/Piko.exe" "$env:RUNNER_TEMP/signed-image/Piko/Piko.exe" -Force
           exit 0
 
-      - name: Package signed application
+      # 与签名后的目录放在同一处，后面的打包与收集不用分两套路径。
+      - name: Stage unsigned application image
+        if: steps.signing.outputs.enabled != 'true'
+        timeout-minutes: 5
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force "$env:RUNNER_TEMP/signed-image" | Out-Null
+          robocopy desktopApp/build/compose/binaries/main-release/app/Piko "$env:RUNNER_TEMP/signed-image/Piko" /E /COPY:DAT /DCOPY:DAT /NFL /NDL /NJH /NJS
+          if ($LASTEXITCODE -ge 8) { throw "robocopy failed: $LASTEXITCODE" }
+          exit 0
+
+      - name: Package application
         run: .\gradlew.bat :desktopApp:packageReleaseMsi :desktopApp:packageReleaseUpdate --no-daemon --stacktrace "-PpikoSignedAppImage=$env:RUNNER_TEMP/signed-image/Piko" "-PpikoUpdateBases=$env:RUNNER_TEMP/update-bases" "-PpikoUpdateRetired=$env:RUNNER_TEMP/update-retired"
 
       - name: Collect artifacts
@@ -269,6 +298,7 @@ jobs:
 
       - name: Upload unsigned MSI
         id: unsigned-msi
+        if: steps.signing.outputs.enabled == 'true'
         uses: actions/upload-artifact@v6
         with:
           name: unsigned-msi-${{ matrix.arch }}
@@ -278,6 +308,7 @@ jobs:
 
       - name: Sign MSI
         id: sign-msi
+        if: steps.signing.outputs.enabled == 'true'
         uses: signpath/github-action-submit-signing-request@v3
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
@@ -290,6 +321,7 @@ jobs:
           output-artifact-directory: ${{ runner.temp }}/signed-msi
 
       - name: Verify signed packages
+        if: steps.signing.outputs.enabled == 'true'
         timeout-minutes: 10
         shell: pwsh
         run: |
@@ -299,8 +331,18 @@ jobs:
           & .github/scripts/verify-windows-signature.ps1 -Path "$env:RUNNER_TEMP/signed-image/Piko/Piko.exe", "dist/$name.msi" -TestCertificate:($env:SIGNING_POLICY -eq 'test-signing')
           & .github/scripts/verify-windows-packages.ps1 -Dist dist -Prefix $name -Launcher "$env:RUNNER_TEMP/signed-image/Piko/Piko.exe" -Work "$env:RUNNER_TEMP/verify-packages"
 
+      # 不验 Authenticode：没有密钥时启动器本来就没有签名。仍核对 MSI、便携包与更新包里的启动器是同一份。
+      - name: Verify unsigned packages
+        if: steps.signing.outputs.enabled != 'true'
+        timeout-minutes: 10
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $name = "piko-windows-${{ matrix.arch }}-$env:VERSION"
+          & .github/scripts/verify-windows-packages.ps1 -Dist dist -Prefix $name -Launcher "$env:RUNNER_TEMP/signed-image/Piko/Piko.exe" -Work "$env:RUNNER_TEMP/verify-packages"
+
       - name: Signing request links
-        if: always()
+        if: always() && steps.signing.outputs.enabled == 'true'
         shell: pwsh
         env:
           LAUNCHER_REQUEST: ${{ steps.sign-launcher.outputs.signing-request-web-url }}
