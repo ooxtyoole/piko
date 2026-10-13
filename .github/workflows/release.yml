@@ -275,8 +275,31 @@ jobs:
           if ($LASTEXITCODE -ge 8) { throw "robocopy failed: $LASTEXITCODE" }
           exit 0
 
+      # 对照清单来自本仓库已公开的 Release。fork 还没有发过版时目录是空的，
+      # 硬传 -PpikoUpdateBases 会在打包末尾失败。没有清单就只给每次都会变的文件打补丁包。
       - name: Package application
-        run: .\gradlew.bat :desktopApp:packageReleaseMsi :desktopApp:packageReleaseUpdate --no-daemon --stacktrace "-PpikoSignedAppImage=$env:RUNNER_TEMP/signed-image/Piko" "-PpikoUpdateBases=$env:RUNNER_TEMP/update-bases" "-PpikoUpdateRetired=$env:RUNNER_TEMP/update-retired"
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $gradleArgs = @(
+            ':desktopApp:packageReleaseMsi',
+            ':desktopApp:packageReleaseUpdate',
+            '--no-daemon',
+            '--stacktrace',
+            "-PpikoSignedAppImage=$env:RUNNER_TEMP/signed-image/Piko"
+          )
+          $bases = "$env:RUNNER_TEMP/update-bases"
+          $retired = "$env:RUNNER_TEMP/update-retired"
+          if (Get-ChildItem $bases -Filter '*-files.json' -ErrorAction SilentlyContinue) {
+            $gradleArgs += "-PpikoUpdateBases=$bases"
+          } else {
+            Write-Host '没有已发布版本的清单，更新包只带每次都会变的文件。'
+          }
+          if (Get-ChildItem $retired -Filter '*-files.json' -ErrorAction SilentlyContinue) {
+            $gradleArgs += "-PpikoUpdateRetired=$retired"
+          }
+          & .\gradlew.bat @gradleArgs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Collect artifacts
         shell: powershell
